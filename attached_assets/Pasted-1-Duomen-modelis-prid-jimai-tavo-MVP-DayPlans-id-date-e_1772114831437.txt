@@ -1,0 +1,199 @@
+1) Duomenų modelis (pridėjimai tavo MVP)
+DayPlans
+
+id
+
+date
+
+employee_id
+
+status (planned|in_progress|done|closed)
+
+created_at, closed_at
+
+carryover_from_plan_id (nullable) – jei šitas planas buvo sukurtas “perkėlimu”
+
+PlanLines
+
+id
+
+day_plan_id
+
+task_type
+
+item_code
+
+description
+
+planned_qty
+
+actual_qty
+
+unit
+
+status (open|partial|done|skipped|blocked)
+
+sort_order
+
+carryover_parent_line_id (nullable) – nuoroda į vakar dienos line, iš kurios atsirado šita eilutė
+
+is_carryover (bool)
+
+carried_qty (int) – kiek buvo perkelta (undone kiekis)
+
+block_reason (nullable)
+
+Svarbu: naujai dienai perkelta eilutė turi turėti aiškų “ryšį” su vakar.
+
+Events (audit log)
+
+id, ts, user_id
+
+entity_type, entity_id
+
+action
+
+payload (json)
+
+2) Kaip skaičiuoti “undone”
+
+Vienai eilutei:
+
+effective_done = min(actual_qty, planned_qty)
+
+undone_qty = max(planned_qty - effective_done, 0)
+
+Jei undone_qty > 0 → reikia perkelti.
+
+3) Auto-perkėlimo taisyklės (kad nesidubliuotų)
+Kada vyksta perkėlimas
+
+Rinkis vieną (rekomenduoju #1):
+
+Kai uždarai dieną (Close day) – adminas ar darbuotojas paspaudžia “Uždaryti dieną”.
+
+✅ tvarkinga, aiškus momentas
+
+✅ neišmėto vidury dienos
+
+Automatiškai 00:05 (cron)
+
+✅ nereikia spausti
+
+❌ jei kas dirba po vidurnakčio – gali sujaukti
+
+MVP geriausia: Close day + papildomas cron kaip safety vėliau.
+
+Kur perkeliam
+
+perkeli į sekantį date tam pačiam employee
+
+jei tos dienos DayPlan dar neegzistuoja → sukurk automatiškai
+
+Kaip perkeliam (du variantai)
+Variant A (rekomenduojamas): “Carryover line”
+
+Sukuri naują PlanLine kitai dienai su:
+
+planned_qty = undone_qty
+
+actual_qty = 0
+
+is_carryover = true
+
+carryover_parent_line_id = vakar line id
+
+carried_qty = undone_qty
+
+✅ švaru, aišku kas buvo perkelta
+✅ analitikoje galėsi atskirti “naujas planas” vs “carryover”
+
+Variant B: Pridedi prie esamos rytojaus eilutės
+
+Jei rytoj jau yra tokia pati eilutė (tas pats employee + task_type + item_code):
+
+planned_qty += undone_qty
+
+pažymi “had_carryover”
+
+✅ mažiau eilučių
+❌ sunkiau audituoti kas iš kur atėjo
+
+MVP: daryk Variant A.
+
+4) “Duplicate yesterday” + “Carryover” kartu
+Tavo ryto planavimo mygtukas “Generate Today”
+
+Kai kuri šiandieną, logika tokia:
+
+jei yra “yesterday plan” → duplicate (kopijuoji planned lines)
+
+jei vakar buvo undone → pridėk carryover lines į šiandieną (viršuje sąrašo)
+
+Taip darbuotojas ryte mato:
+
+pirmiausia “perkelta iš vakar”
+
+tada šiandienos planas
+
+5) UI darbuotojui (kad būtų max paprasta)
+
+Kiekviena eilutė:
+
+X item
+Planned: 100 (ar 20 – jei carryover)
+Actual: [ - ] 50 [ + ]
+Status badge: open/partial/done
+Jei carryover: mažas badge “From yesterday”
+
+Mygtukas:
+
+“Close day” (tik jei role leidžia) arba palieki tik adminui.
+
+6) Analitika (ką galėsi rodyti)
+
+Per dieną / darbuotoją:
+
+Total Planned
+
+Total Effective Done
+
+Completion %
+
+Carryover in (kiek atėjo iš vakar)
+
+Carryover out (kiek liko į rytoj)
+
+Tai labai padeda valdyti “skolas”.
+
+7) Endpoint’ai (kur reikės)
+
+POST /api/day-plans/:id/close
+
+sukuria carryover į next day
+
+pažymi planą closed
+
+įrašo Events
+
+POST /api/day-plans/generate?date=YYYY-MM-DD
+
+duplicate from yesterday
+
+apply carryover from yesterday (jei vakar closed arba jei vakar turi undone)
+
+8) Saugikliai (labai svarbu)
+
+Kad nesukurtų carryover 2 kartus:
+
+DayPlan turi closed_at → jei uždarytas, daugiau neperkelinėjam
+
+PlanLine carryover turi carryover_parent_line_id → prieš kuriant tikrinam ar jau sukurta
+
+Jei pasakai ką rinkiesi dėl “Close day”:
+
+ar uždarys adminas,
+
+ar patys darbuotojai,
+
+aš tau iš karto parašysiu konkrečią Prisma schemą (Users/DayPlans/PlanLines/Events) + “close day” pseudo-kodą, kad galėtum tiesiai dėti į Replit.
